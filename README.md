@@ -5,6 +5,13 @@ Most stable release here: https://github.com/farmerbriantee/AgOpenGPS/releases
 
 Discussed in detail: https://discourse.agopengps.com/
 
+# this is a beta release with additional functions:
+
+* dual-RTK integrated 
+* integrated sensor fusion like PANDA/PAOGI (supports BNO085 in RVC-mode, so no Arduino needed any more)
+* auto-detection of USB devices that are known by VID 
+* auto-detection of NMEA last sentence
+
 *** Important ****
 
 If you distribute copies of such a program, whether
