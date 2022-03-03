@@ -32,7 +32,6 @@ namespace AgIO
         public double[] myLattitude = new double[2];
         public double[] myAltitude = new double[2];
         public int[] myTime = new int[2];
-        public int lastNMEATime = 0;
         public double antennaDist = 0;  // distance between the two antennas
 
         public ushort satellitesTracked = ushort.MaxValue, hdopX100 = ushort.MaxValue, 
@@ -124,7 +123,7 @@ namespace AgIO
             if (spIMU.IsOpen && isRVC)    // RVC mode on BNO085: do on-the-fly decoding to safe performance
             {
                 short yaw = 0, pitch = 0, roll = 0;
-                short yawSum = 0, pitchSum = 0, rollSum = 0;
+                double yawSum = 0, pitchSum = 0, rollSum = 0;
                 uint NoOfPackets = 0;
                 int bytesNow = spIMU.BytesToRead;          // no. of bytes in buffer
                 int bytesGot = 0;
@@ -144,11 +143,11 @@ namespace AgIO
                             NoOfPackets++;                                                          // ok, let's decode it
                             dummy = (byte)spIMU.ReadByte();   // running counter (we don't care for the moment)
                             yaw = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8);   // 1/100 deg
-                            yawSum += yaw;
+                            yawSum += Convert.ToDouble(yaw);
                             pitch = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8); // 1/100 deg
-                            pitchSum += pitch;
+                            pitchSum += Convert.ToDouble(pitch);
                             roll = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8);  // 1/100 deg
-                            rollSum += roll;
+                            rollSum += Convert.ToDouble(roll);
                             dummy = (byte)spIMU.ReadByte();   // accelaration x low
                             dummy = (byte)spIMU.ReadByte();   // accelaration x high
                             dummy = (byte)spIMU.ReadByte();   // accelaration y low
@@ -161,16 +160,13 @@ namespace AgIO
                     if (NoOfPackets != 0)
                     {
                         RVCYaw = yawSum / (100 * NoOfPackets);
-                        
-                        RVCRoll = rollSum / (100 * NoOfPackets);
-                        imuRoll = (short)RVCRoll;
-                        imuRollData = imuRoll;
-                        
-                        RVCHeading = headingCorrectionRVC + 180 - yawSum / (100 * NoOfPackets);    // by changing - to +, the BNO085 board can be flipped
-                        if (RVCHeading >= 360) RVCHeading -= 360;
-                        imuHeading = (ushort)RVCHeading;
-                        imuHeadingData = imuHeading;
 
+                        RVCRoll = rollSum / (100 * NoOfPackets);
+                        GPSroll = RVCRoll;   // ????
+                        RVCHeading = headingCorrectionRVC + 180 - yawSum / (100 * NoOfPackets);    // by changing - to +, the BNO085 board can be flipped
+                        GPSheading = RVCHeading; // ????
+                        if (GPSheading >= 360) GPSheading -= 360;
+                        
                         traffic.cntrIMUIn = (int)(100 * RVCPacketLength);  // 19 bytes per packet, 100 packets per second
                         
                         double avgGPSHeading = 0, avgGPSSpeed = 0;  // correct RVC heading by GNVTG heading
@@ -182,7 +178,7 @@ namespace AgIO
                         if (spGPS2.IsOpen)
                         {
                             avgGPSSpeed += speedData[1];
-                            avgGPSHeading += headingTrueData[1];
+                            avgGPSHeading += headingTrueData[0];
                         }
                         if (spGPS.IsOpen && spGPS2.IsOpen)
                         {
@@ -206,6 +202,7 @@ namespace AgIO
                                 headingCorrectionRVC += 0.01 * avgGPSSpeed * headingDiff;         // the higher the speed the more reliable is GPS heading
                         }
                         //TimedMessageBox(2000, "Debug: " + headingDiff, "RVC init done");
+
 
                         if (headingCorrectionRVC < 0) headingCorrectionRVC += 360; ;
                         if (headingCorrectionRVC >= 360) headingCorrectionRVC -= 360;
@@ -270,17 +267,6 @@ namespace AgIO
                 words = nextNMEASentence.Split(',');
                 if (words.Length < 3) break;
 
-                // automatically set 'lastSentence' when the last sentence was received more than 30ms ago
-                if ((words[0] == "$GPGGA" || words[0] == "$GNGGA" || words[0] == "$GPVTG" || words[0] == "$GNVTG" ||
-                     words[0] == "$GPHPD" || words[0] == "$GPHDT" || words[0] == "$GNHDT" || words[0] == "$GNTRA") && words.Length > 5)  
-                {
-                    int thisNMEATime = DateTime.UtcNow.Millisecond;
-                    if (thisNMEATime > lastNMEATime + 30 && lastSentenceCache.Length == 6)  // 30ms gap: previous sentence was last sentence; ignoring overflow intentionally
-                        lastSentence = lastSentenceCache.Substring(3, 3);
-                    lastNMEATime = thisNMEATime;
-                    lastSentenceCache = words[0];
-                }
-
                 if ((words[0] == "$GPGGA" || words[0] == "$GNGGA") && words.Length > 13)
                 {
                     ParseGGA(GPS012);
@@ -300,26 +286,18 @@ namespace AgIO
                             GPSheading = 180 - Math.Atan2((myLattitude[0] - myLattitude[1]) * Math.PI / 180, 
                                                           (myLongitude[0] - myLongitude[1]) * Math.PI / 180 * Math.Cos(myLattitude[0] * Math.PI / 180)) * 180 / Math.PI;
                             headingTrueDualData = (float)GPSheading;  // not sure, if this is necessary/meaningful... ;)
-                            headingTrueDual = headingTrueDualData;
                             GPSroll = Math.Atan((myAltitude[0] - myAltitude[1]) / antennaDist) * 180 / Math.PI;
-                            rollData = (float)GPSroll;
-                            roll = rollData;
-                            latitudeSend = latitude;
-                            longitudeSend = longitude;
-                            if (lastSentence == "GGA") isNMEAToSend = true;
-
-                            ParseIMU_BNO085_RVC();  // add BNO085 values on CGA reception
+                            //GPSheading = (myLattitude[0] - myLattitude[1]) * 10000000;  // debug outputs
+                            //GPSroll = (myLongitude[0] - myLongitude[1])  * Math.Cos(myLattitude[0] * Math.PI / 180) * 10000000;
+                            //antennaDist = myAltitude[0] - myAltitude[1];
+                            ParseIMU_BNO085_RVC();  
                         }
                     }
                     else  // only one F9P => copy directly
                     {
                         latitude = myLattitude[GPS012];
                         longitude = myLongitude[GPS012];
-                        latitudeSend = latitude;
-                        longitudeSend = longitude;
-                        if (lastSentence == "GGA") isNMEAToSend = true;
-
-                        ParseIMU_BNO085_RVC();  // add BNO085 values on CGA reception
+                        ParseIMU_BNO085_RVC();  
                     }
                 }
 
@@ -613,6 +591,8 @@ namespace AgIO
                 { if (words[5] == "W") longitude *= -1; }
                 longitudeSend = longitude;
                 myLongitude[GPS012] = longitude;
+
+                if (lastSentence == "GGA") isNMEAToSend = true;
 
                 myTime[GPS012] = DateTime.UtcNow.Millisecond;
             }

@@ -116,6 +116,7 @@ namespace AgIO
                 cboxIMU.Enabled = false;
                 btnCloseIMU.Enabled = true;
                 btnOpenIMU.Enabled = false;
+                lblIMUBaud.Text = mf.spIMU.BaudRate.ToString();
             }
             else
             {
@@ -406,6 +407,7 @@ namespace AgIO
                 btnCloseIMU.Enabled = true;
                 btnOpenIMU.Enabled = false;
                 lblCurrentIMU.Text = mf.spIMU.PortName;
+                lblIMUBaud.Text = mf.spIMU.BaudRate.ToString();
             }
             else
             {
@@ -723,6 +725,12 @@ namespace AgIO
         private void lblCurrentPort2_Click_1(object sender, EventArgs e)
         {
 
+        }
+
+        private void comboBoxIMUBaud_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            mf.spIMU.BaudRate = Convert.ToInt32(cboxIMUBaud.Text);
+            FormLoop.baudRateIMU = Convert.ToInt32(cboxIMUBaud.Text);
         }
     } //class
 } //namespace

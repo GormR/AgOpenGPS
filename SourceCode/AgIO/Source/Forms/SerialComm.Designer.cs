@@ -121,12 +121,17 @@ namespace AgIO
             {
                 spIMU.PortName = portNameIMU;
                 spIMU.BaudRate = baudRateIMU;
+                if (baudRateIMU == 115200) isRVC = true;  // dectecion by VID would be better
                 if (!isRVC) spIMU.DataReceived += sp_DataReceivedIMU;  // safe processor time when in RVC mode
                 spIMU.DtrEnable = true;
                 spIMU.RtsEnable = true;
             }
 
-            try { spIMU.Open(); }
+            try 
+            { 
+                spIMU.Open();
+                spIMU.DiscardInBuffer();
+            }
             catch (Exception e)
             {
                 //WriteErrorLog("Opening Machine Port" + e.ToString());
@@ -147,6 +152,7 @@ namespace AgIO
                 spIMU.DiscardInBuffer();
 
                 Properties.Settings.Default.setPort_portNameIMU = portNameIMU;
+                Properties.Settings.Default.setPort_baudRateIMU = baudRateIMU;
                 Properties.Settings.Default.setPort_wasIMUConnected = true;
                 Properties.Settings.Default.Save();
                 wasIMUConnectedLastRun = true;

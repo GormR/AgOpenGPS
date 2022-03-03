@@ -205,7 +205,7 @@ namespace AgIO
 
         public double secondsSinceStart, lastSecond;
 
-        public string lastSentence;
+        public string lastSentence, lastSentenceCache = "";
 
         //The base directory where Drive will be stored and fields and vehicles branch from
         public string baseDirectory;
@@ -237,13 +237,17 @@ namespace AgIO
             //set baud and port from last time run
             baudRateGPS = Settings.Default.setPort_baudRateGPS;
             portNameGPS = Settings.Default.setPort_portNameGPS;
-            wasGPSConnectedLastRun = Settings.Default.setPort_wasGPSConnected;
             portNameGPS2 = Settings.Default.setPort_portNameGPS2;
+            wasGPSConnectedLastRun = Settings.Default.setPort_wasGPSConnected;
             wasGPS2ConnectedLastRun = Settings.Default.setPort_wasGPS2Connected;
             if (wasGPSConnectedLastRun)
             {
                 OpenGPSPort();
                 if (spGPS.IsOpen) lblGPS1Comm.Text = portNameGPS;
+            }
+            if (wasGPS2ConnectedLastRun)
+            {
+                OpenGPS2Port();
                 if (spGPS2.IsOpen) lblGPS2Comm.Text = portNameGPS2;
             }
 
@@ -259,6 +263,7 @@ namespace AgIO
 
             //Open IMU
             portNameIMU = Settings.Default.setPort_portNameIMU;
+            baudRateIMU = Settings.Default.setPort_baudRateIMU;
             wasIMUConnectedLastRun = Settings.Default.setPort_wasIMUConnected;
             if (wasIMUConnectedLastRun)
             {
