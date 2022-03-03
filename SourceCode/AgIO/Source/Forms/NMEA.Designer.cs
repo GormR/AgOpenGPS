@@ -123,53 +123,57 @@ namespace AgIO
         {
             if (spIMU.IsOpen && isRVC)    // RVC mode on BNO085: do on-the-fly decoding to safe performance
             {
-                short yaw = 0, pitch = 0, roll = 0;
-                short yawSum = 0, pitchSum = 0, rollSum = 0;
+                short yaw = 0, pitch = 0, roll = 0, accX = 0, accY = 0, accZ = 0;
+                short yawSum = 0, pitchSum = 0, rollSum = 0, accXSum = 0, accYSum = 0, accZSum = 0;
                 uint NoOfPackets = 0;
-                int bytesNow = spIMU.BytesToRead;          // no. of bytes in buffer
-                int bytesGot = 0;
-                byte dummy = 0;
 
                 traffic.cntrIMUIn = 0;
-                if (bytesNow > 21 * RVCPacketLength)       // too many bytes in buffer => flush it
+                if (spIMU.BytesToRead > 21 * RVCPacketLength)       // too many bytes in buffer => flush it
                     spIMU.DiscardInBuffer();
                 else
                 {
-                    while (bytesNow - bytesGot >= RVCPacketLength - 3)  // while there is at least one packet in buffer, do..
+                    while (spIMU.BytesToRead >= RVCPacketLength - 2)  // while there is at least one packet in buffer, do..
                     {
-                        while (spIMU.ReadByte() != 0xaa && bytesNow - bytesGot >= RVCPacketLength - 3)   // look out for 1st 0xaa
-                            bytesGot++;
-                        if (bytesNow - bytesGot >= RVCPacketLength - 4 && spIMU.ReadByte() == 0xaa)      // look out for 2nd 0xaa
+                        while (spIMU.BytesToRead >= RVCPacketLength - 2 && spIMU.ReadByte() != 0xaa);   // look out for 1st 0xaa
+                        if (spIMU.ReadByte() == 0xaa)      // look out for 2nd 0xaa
                         {
-                            NoOfPackets++;                                                          // ok, let's decode it
-                            dummy = (byte)spIMU.ReadByte();   // running counter (we don't care for the moment)
-                            yaw = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8);   // 1/100 deg
-                            yawSum += yaw;
-                            pitch = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8); // 1/100 deg
-                            pitchSum += pitch;
-                            roll = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8);  // 1/100 deg
-                            rollSum += roll;
-                            dummy = (byte)spIMU.ReadByte();   // accelaration x low
-                            dummy = (byte)spIMU.ReadByte();   // accelaration x high
-                            dummy = (byte)spIMU.ReadByte();   // accelaration y low
-                            dummy = (byte)spIMU.ReadByte();   // accelaration y high
-                            dummy = (byte)spIMU.ReadByte();   // accelaration z low
-                            dummy = (byte)spIMU.ReadByte();   // accelaration z high
-                            bytesGot += 14;  // we don't care for the rest here
+                            byte[] RVCdata = new byte[RVCPacketLength - 2];
+                            byte Csum = 0; // checksum
+                            for (int i = 0; i < RVCdata.Length; i++)
+                            {
+                                RVCdata[i] = (byte)spIMU.ReadByte();
+                                Csum += RVCdata[i];
+                            }
+                            if (Csum == (byte)(RVCdata[RVCPacketLength - 3] << 1))
+                            {
+                                NoOfPackets++;                                                          // ok, let's decode it
+                                yaw = (short)(RVCdata[1] | RVCdata[2] << 8);   // 1/100 deg
+                                yawSum += yaw;
+                                pitch = (short)(RVCdata[3] | RVCdata[4] << 8); // 1/100 deg
+                                pitchSum += pitch;
+                                roll = (short)(RVCdata[5] | RVCdata[6] << 8);  // 1/100 deg
+                                rollSum += roll;
+                                accX = (short)(RVCdata[7] | RVCdata[8] << 8);   // accelaration x 1/1000 g = 1/100 m/s²
+                                accXSum += accX;
+                                accY = (short)(RVCdata[9] | RVCdata[10] << 8);   // accelaration y 1/1000 g = 1/100 m/s²
+                                accYSum += accY;
+                                accZ = (short)(RVCdata[11] | RVCdata[12] << 8);   // accelaration z 1/1000 g = 1/100 m/s²
+                                accZSum += accZ;
+                            }
                         }
                     }
-                    if (NoOfPackets != 0)
+                    if (NoOfPackets > 3)
                     {
                         RVCYaw = yawSum / (100 * NoOfPackets);
                         
-                        RVCRoll = rollSum / (100 * NoOfPackets);
-                        imuRoll = (short)RVCRoll;
-                        imuRollData = imuRoll;
+                        RVCRoll = rollSum / (10 * NoOfPackets);
                         
                         RVCHeading = headingCorrectionRVC + 180 - yawSum / (100 * NoOfPackets);    // by changing - to +, the BNO085 board can be flipped
                         if (RVCHeading >= 360) RVCHeading -= 360;
                         imuHeading = (ushort)RVCHeading;
                         imuHeadingData = imuHeading;
+                        imuRoll = (short)RVCRoll;
+                        imuRollData = imuRoll;
 
                         traffic.cntrIMUIn = (int)(100 * RVCPacketLength);  // 19 bytes per packet, 100 packets per second
                         
