@@ -26,7 +26,8 @@ namespace AgIO
         public float[] ageData = new float[2];
         public float[] hdopData = new float[2];
 
-        public double imuPitchRate, latitudeSend = double.MaxValue, longitudeSend = double.MaxValue, latitude, longitude, GPSroll, GPSheading, RVCHeading, RVCRoll, RVCYaw;
+        public double imuPitchRate, latitudeSend = double.MaxValue, longitudeSend = double.MaxValue, latitude, longitude, GPSroll, GPSheading;
+        public float RVCHeading, RVCRoll, RVCYaw, RVCPitch;
 
         public double[] myLongitude = new double[2];  // definitions for dual RTK with two F9P
         public double[] myLattitude = new double[2];
@@ -51,7 +52,7 @@ namespace AgIO
 
         double LastUpdateUTC = 0;
 
-        double headingCorrectionRVC = 0;  // BNO085 in RVC mode does only have a relative heading; value: 0 <= headingCorrectionRVC < 360
+        float headingCorrectionRVC = 0;  // BNO085 in RVC mode does only have a relative heading; value: 0 <= headingCorrectionRVC < 360
 
         //Convert Fix value to Text
         public string FixQuality
@@ -124,8 +125,8 @@ namespace AgIO
             if (spIMU.IsOpen && isRVC)    // RVC mode on BNO085: do on-the-fly decoding to safe performance
             {
                 short yaw = 0, pitch = 0, roll = 0, accX = 0, accY = 0, accZ = 0;
-                short yawSum = 0, pitchSum = 0, rollSum = 0, accXSum = 0, accYSum = 0, accZSum = 0;
-                uint NoOfPackets = 0;
+                int yawSum = 0, pitchSum = 0, rollSum = 0, accXSum = 0, accYSum = 0, accZSum = 0;
+                int NoOfPackets = 0, NoOf0To180 = 0;
 
                 traffic.cntrIMUIn = 0;
                 if (spIMU.BytesToRead > 21 * RVCPacketLength)       // too many bytes in buffer => flush it
@@ -148,36 +149,45 @@ namespace AgIO
                             {
                                 NoOfPackets++;                                                          // ok, let's decode it
                                 yaw = (short)(RVCdata[1] | RVCdata[2] << 8);   // 1/100 deg
-                                yawSum += yaw;
+                                yawSum += (int)yaw; if (yaw < 180) NoOf0To180++;
                                 pitch = (short)(RVCdata[3] | RVCdata[4] << 8); // 1/100 deg
-                                pitchSum += pitch;
+                                pitchSum += (int)pitch;
                                 roll = (short)(RVCdata[5] | RVCdata[6] << 8);  // 1/100 deg
-                                rollSum += roll;
+                                rollSum += (int)roll;
                                 accX = (short)(RVCdata[7] | RVCdata[8] << 8);   // accelaration x 1/1000 g = 1/100 m/s²
-                                accXSum += accX;
+                                accXSum += (int)accX;
                                 accY = (short)(RVCdata[9] | RVCdata[10] << 8);   // accelaration y 1/1000 g = 1/100 m/s²
-                                accYSum += accY;
+                                accYSum += (int)accY;
                                 accZ = (short)(RVCdata[11] | RVCdata[12] << 8);   // accelaration z 1/1000 g = 1/100 m/s²
-                                accZSum += accZ;
+                                accZSum += (int)accZ;
                             }
+                            else TimedMessageBox(500, "Out of Sync", "bla");
                         }
                     }
                     if (NoOfPackets > 3)
                     {
-                        RVCYaw = yawSum / (100 * NoOfPackets);
-                        
-                        RVCRoll = rollSum / (10 * NoOfPackets);
-                        
-                        RVCHeading = headingCorrectionRVC + 180 - yawSum / (100 * NoOfPackets);    // by changing - to +, the BNO085 board can be flipped
-                        if (RVCHeading >= 360) RVCHeading -= 360;
-                        imuHeading = (ushort)RVCHeading;
-                        imuHeadingData = imuHeading;
-                        imuRoll = (short)RVCRoll;
-                        imuRollData = imuRoll;
+                        if (NoOf0To180 != NoOfPackets && NoOf0To180 != 0) yawSum += 36000 * NoOf0To180; // ups, we're near to 0°/360°
+                        RVCYaw = (float)(yawSum / (100 * NoOfPackets));
+                        if (RVCYaw >= 360) RVCYaw -= 360;
+                        RVCPitch = (float)(pitchSum / (100 * NoOfPackets));
+                        RVCRoll = (float)(rollSum / (100 * NoOfPackets));
 
-                        traffic.cntrIMUIn = (int)(100 * RVCPacketLength);  // 19 bytes per packet, 100 packets per second
+                        RVCHeading = headingCorrectionRVC + 180 - RVCYaw;    // by changing - to +, the BNO085 board can be flipped
+                        if (RVCHeading >= 360) RVCHeading -= 360;
+                        imuHeading = (ushort)(RVCHeading * 10);
+                        imuHeadingData = (ushort)RVCHeading;
+
+                        imuPitch = (short)(RVCPitch );
+                        imuPitchData = RVCPitch;
+
+                        imuRoll = (short)(RVCRoll * 10);
+                        imuRollData = (short)RVCRoll;
+
+                        if (isLogNMEA) logNMEASentence.Append("\r\n" + DateTime.UtcNow.ToString(" ->>  mm:ss.fff ", CultureInfo.InvariantCulture) + "IMU heading: " + imuHeading.ToString() + ", Roll: " + imuRoll.ToString() +"\r\n");
+            
+                        traffic.cntrIMUIn = (int)(NoOfPackets * RVCPacketLength);  // 19 bytes per packet => value is: bytes per NMEA period 
                         
-                        double avgGPSHeading = 0, avgGPSSpeed = 0;  // correct RVC heading by GNVTG heading
+                        float avgGPSHeading = 0, avgGPSSpeed = 0;  // correct RVC heading by GNVTG heading
                         if (spGPS.IsOpen)
                         {
                             avgGPSSpeed = speedData[0];
@@ -194,7 +204,7 @@ namespace AgIO
                             avgGPSHeading = avgGPSHeading / 2;
                         }
                         
-                        double headingDiff = avgGPSHeading - RVCHeading;
+                        float headingDiff = avgGPSHeading - RVCHeading;
                         if (!initRVC && avgGPSSpeed > 5)                                                       // 1st init also at low speed
                         {
                             headingCorrectionRVC = headingDiff;
@@ -206,13 +216,16 @@ namespace AgIO
                             if (headingDiff > 180) headingDiff -= 360;                                    // do the nearer turn ( +/-360 => +/- 180 )
                             if (headingDiff < -180) headingDiff += 360;
 
-                            if (avgGPSSpeed > 15 || Math.Abs(headingDiff) < 20)                     // avoid corrections while driving backwards
-                                headingCorrectionRVC += 0.01 * avgGPSSpeed * headingDiff;         // the higher the speed the more reliable is GPS heading
+                            if (Math.Abs(avgGPSSpeed) > 10 && Math.Abs(headingDiff) < 20)                // avoid corrections while driving backwards
+                            { 
+                                headingCorrectionRVC += avgGPSSpeed * headingDiff / 100;                // the higher the speed the more reliable is GPS heading
+                                if (headingCorrectionRVC < 0) headingCorrectionRVC += 360; ;
+                                if (headingCorrectionRVC >= 360) headingCorrectionRVC -= 360;
+                                TimedMessageBox(500, "corr", "cor" + (0.01 * avgGPSSpeed * headingDiff)+" diff"+headingDiff+" speed"+avgGPSSpeed);
+                            }
                         }
                         //TimedMessageBox(2000, "Debug: " + headingDiff, "RVC init done");
 
-                        if (headingCorrectionRVC < 0) headingCorrectionRVC += 360; ;
-                        if (headingCorrectionRVC >= 360) headingCorrectionRVC -= 360;
                     }
                 }
             }
