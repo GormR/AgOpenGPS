@@ -26,14 +26,12 @@ namespace AgIO
         public float[] ageData = new float[2];
         public float[] hdopData = new float[2];
 
-        public double imuPitchRate, latitudeSend = double.MaxValue, longitudeSend = double.MaxValue, latitude, longitude, GPSroll, GPSheading;
-        public float RVCHeading, RVCRoll, RVCYaw, RVCPitch;
+        public double imuPitchRate, latitudeSend = double.MaxValue, longitudeSend = double.MaxValue, latitude, longitude, GPSroll, GPSheading, RVCHeading, RVCRoll, RVCYaw;
 
         public double[] myLongitude = new double[2];  // definitions for dual RTK with two F9P
         public double[] myLattitude = new double[2];
         public double[] myAltitude = new double[2];
         public int[] myTime = new int[2];
-        public int lastNMEATime = 0;
         public double antennaDist = 0;  // distance between the two antennas
 
         public ushort satellitesTracked = ushort.MaxValue, hdopX100 = ushort.MaxValue, 
@@ -52,7 +50,7 @@ namespace AgIO
 
         double LastUpdateUTC = 0;
 
-        float headingCorrectionRVC = 0;  // BNO085 in RVC mode does only have a relative heading; value: 0 <= headingCorrectionRVC < 360
+        double headingCorrectionRVC = 0;  // BNO085 in RVC mode does only have a relative heading; value: 0 <= headingCorrectionRVC < 360
 
         //Convert Fix value to Text
         public string FixQuality
@@ -124,71 +122,54 @@ namespace AgIO
         {
             if (spIMU.IsOpen && isRVC)    // RVC mode on BNO085: do on-the-fly decoding to safe performance
             {
-                short yaw = 0, pitch = 0, roll = 0, accX = 0, accY = 0, accZ = 0;
-                int yawSum = 0, pitchSum = 0, rollSum = 0, accXSum = 0, accYSum = 0, accZSum = 0;
-                int NoOfPackets = 0, NoOf0To180 = 0;
+                short yaw = 0, pitch = 0, roll = 0;
+                double yawSum = 0, pitchSum = 0, rollSum = 0;
+                uint NoOfPackets = 0;
+                int bytesNow = spIMU.BytesToRead;          // no. of bytes in buffer
+                int bytesGot = 0;
+                byte dummy = 0;
 
                 traffic.cntrIMUIn = 0;
-                if (spIMU.BytesToRead > 21 * RVCPacketLength)       // too many bytes in buffer => flush it
+                if (bytesNow > 21 * RVCPacketLength)       // too many bytes in buffer => flush it
                     spIMU.DiscardInBuffer();
                 else
                 {
-                    while (spIMU.BytesToRead >= RVCPacketLength - 2)  // while there is at least one packet in buffer, do..
+                    while (bytesNow - bytesGot >= RVCPacketLength - 3)  // while there is at least one packet in buffer, do..
                     {
-                        while (spIMU.BytesToRead >= RVCPacketLength - 2 && spIMU.ReadByte() != 0xaa);   // look out for 1st 0xaa
-                        if (spIMU.ReadByte() == 0xaa)      // look out for 2nd 0xaa
+                        while (spIMU.ReadByte() != 0xaa && bytesNow - bytesGot >= RVCPacketLength - 3)   // look out for 1st 0xaa
+                            bytesGot++;
+                        if (bytesNow - bytesGot >= RVCPacketLength - 4 && spIMU.ReadByte() == 0xaa)      // look out for 2nd 0xaa
                         {
-                            byte[] RVCdata = new byte[RVCPacketLength - 2];
-                            byte Csum = 0; // checksum
-                            for (int i = 0; i < RVCdata.Length; i++)
-                            {
-                                RVCdata[i] = (byte)spIMU.ReadByte();
-                                Csum += RVCdata[i];
-                            }
-                            if (Csum == (byte)(RVCdata[RVCPacketLength - 3] << 1))
-                            {
-                                NoOfPackets++;                                                          // ok, let's decode it
-                                yaw = (short)(RVCdata[1] | RVCdata[2] << 8);   // 1/100 deg
-                                yawSum += (int)yaw; if (yaw < 180) NoOf0To180++;
-                                pitch = (short)(RVCdata[3] | RVCdata[4] << 8); // 1/100 deg
-                                pitchSum += (int)pitch;
-                                roll = (short)(RVCdata[5] | RVCdata[6] << 8);  // 1/100 deg
-                                rollSum += (int)roll;
-                                accX = (short)(RVCdata[7] | RVCdata[8] << 8);   // accelaration x 1/1000 g = 1/100 m/s²
-                                accXSum += (int)accX;
-                                accY = (short)(RVCdata[9] | RVCdata[10] << 8);   // accelaration y 1/1000 g = 1/100 m/s²
-                                accYSum += (int)accY;
-                                accZ = (short)(RVCdata[11] | RVCdata[12] << 8);   // accelaration z 1/1000 g = 1/100 m/s²
-                                accZSum += (int)accZ;
-                                IMUAutoBaud = 100;
-                            }
-                            // else TimedMessageBox(500, "Information", "Out of Sync");
+                            NoOfPackets++;                                                          // ok, let's decode it
+                            dummy = (byte)spIMU.ReadByte();   // running counter (we don't care for the moment)
+                            yaw = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8);   // 1/100 deg
+                            yawSum += Convert.ToDouble(yaw);
+                            pitch = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8); // 1/100 deg
+                            pitchSum += Convert.ToDouble(pitch);
+                            roll = (short)((byte)spIMU.ReadByte() | (byte)spIMU.ReadByte() << 8);  // 1/100 deg
+                            rollSum += Convert.ToDouble(roll);
+                            dummy = (byte)spIMU.ReadByte();   // accelaration x low
+                            dummy = (byte)spIMU.ReadByte();   // accelaration x high
+                            dummy = (byte)spIMU.ReadByte();   // accelaration y low
+                            dummy = (byte)spIMU.ReadByte();   // accelaration y high
+                            dummy = (byte)spIMU.ReadByte();   // accelaration z low
+                            dummy = (byte)spIMU.ReadByte();   // accelaration z high
+                            bytesGot += 14;  // we don't care for the rest here
                         }
                     }
-                    if (NoOfPackets > 3)
+                    if (NoOfPackets != 0)
                     {
-                        if (NoOf0To180 != NoOfPackets && NoOf0To180 != 0) yawSum += 36000 * NoOf0To180; // ups, we're near to 0°/360°
-                        RVCYaw = (float)(yawSum / (100 * NoOfPackets));
-                        if (RVCYaw >= 360) RVCYaw -= 360;
-                        RVCPitch = (float)(pitchSum / (100 * NoOfPackets));
-                        RVCRoll = (float)(rollSum / (100 * NoOfPackets));
+                        RVCYaw = yawSum / (100 * NoOfPackets);
 
-                        RVCHeading = headingCorrectionRVC + 180 + RVCYaw;    // by changing - to +, the BNO085 board can be flipped
-                        if (RVCHeading >= 360) RVCHeading -= 360;
-                        imuHeading = (ushort)(RVCHeading * 10);
-                        imuHeadingData = (ushort)RVCHeading;
-
-                        imuPitch = (short)(RVCPitch );
-                        imuPitchData = RVCPitch;
-
-                        imuRoll = (short)(RVCRoll * 10);
-                        imuRollData = (short)RVCRoll;
-
-                        if (isLogNMEA) logNMEASentence.Append("\r\n" + DateTime.UtcNow.ToString(" ->>  mm:ss.fff ", CultureInfo.InvariantCulture) + "IMU heading: " + imuHeading.ToString() + ", Roll: " + imuRoll.ToString() +"\r\n");
-            
-                        traffic.cntrIMUIn = (int)(NoOfPackets * RVCPacketLength);  // 19 bytes per packet => value is: bytes per NMEA period 
+                        RVCRoll = rollSum / (100 * NoOfPackets);
+                        GPSroll = RVCRoll;   // ????
+                        RVCHeading = headingCorrectionRVC + 180 - yawSum / (100 * NoOfPackets);    // by changing - to +, the BNO085 board can be flipped
+                        GPSheading = RVCHeading; // ????
+                        if (GPSheading >= 360) GPSheading -= 360;
                         
-                        float avgGPSHeading = 0, avgGPSSpeed = 0;  // correct RVC heading by GNVTG heading
+                        traffic.cntrIMUIn = (int)(100 * RVCPacketLength);  // 19 bytes per packet, 100 packets per second
+                        
+                        double avgGPSHeading = 0, avgGPSSpeed = 0;  // correct RVC heading by GNVTG heading
                         if (spGPS.IsOpen)
                         {
                             avgGPSSpeed = speedData[0];
@@ -197,7 +178,7 @@ namespace AgIO
                         if (spGPS2.IsOpen)
                         {
                             avgGPSSpeed += speedData[1];
-                            avgGPSHeading += headingTrueData[1];
+                            avgGPSHeading += headingTrueData[0];
                         }
                         if (spGPS.IsOpen && spGPS2.IsOpen)
                         {
@@ -205,7 +186,7 @@ namespace AgIO
                             avgGPSHeading = avgGPSHeading / 2;
                         }
                         
-                        float headingDiff = avgGPSHeading - RVCHeading;
+                        double headingDiff = avgGPSHeading - RVCHeading;
                         if (!initRVC && avgGPSSpeed > 5)                                                       // 1st init also at low speed
                         {
                             headingCorrectionRVC = headingDiff;
@@ -217,16 +198,14 @@ namespace AgIO
                             if (headingDiff > 180) headingDiff -= 360;                                    // do the nearer turn ( +/-360 => +/- 180 )
                             if (headingDiff < -180) headingDiff += 360;
 
-                            if (Math.Abs(avgGPSSpeed) > 10 && Math.Abs(headingDiff) < 20)                // avoid corrections while driving backwards
-                            { 
-                                headingCorrectionRVC += avgGPSSpeed * headingDiff / 100;                // the higher the speed the more reliable is GPS heading
-                                if (headingCorrectionRVC < 0) headingCorrectionRVC += 360; ;
-                                if (headingCorrectionRVC >= 360) headingCorrectionRVC -= 360;
-                                TimedMessageBox(500, "corr", "cor" + (0.01 * avgGPSSpeed * headingDiff)+" diff"+headingDiff+" speed"+avgGPSSpeed);
-                            }
+                            if (avgGPSSpeed > 15 || Math.Abs(headingDiff) < 20)                     // avoid corrections while driving backwards
+                                headingCorrectionRVC += 0.01 * avgGPSSpeed * headingDiff;         // the higher the speed the more reliable is GPS heading
                         }
                         //TimedMessageBox(2000, "Debug: " + headingDiff, "RVC init done");
 
+
+                        if (headingCorrectionRVC < 0) headingCorrectionRVC += 360; ;
+                        if (headingCorrectionRVC >= 360) headingCorrectionRVC -= 360;
                     }
                 }
             }
@@ -288,24 +267,6 @@ namespace AgIO
                 words = nextNMEASentence.Split(',');
                 if (words.Length < 3) break;
 
-                // automatically set 'lastSentence' when the last sentence was received more than 30ms ago
-                if ((words[0] == "$GPGGA" || words[0] == "$GNGGA" || words[0] == "$GPVTG" || words[0] == "$GNVTG" ||
-                     words[0] == "$GPHPD" || words[0] == "$GPHDT" || words[0] == "$GNHDT" || words[0] == "$GNTRA") && words.Length > 5)  
-                {
-                    int thisNMEATime = DateTime.UtcNow.Millisecond;
-                    if (thisNMEATime > lastNMEATime + 30 && lastSentenceCache.Length == 6)  // 30ms gap: previous sentence was last sentence; ignoring overflow intentionally
-                    {
-                        if (lastSentence != lastSentenceCache.Substring(3, 3)) 
-                        {
-                            lastSentence = lastSentenceCache.Substring(3, 3);
-                            TimedMessageBox(2000, "NMEA", "Last Sentence: " + lastSentence);
-                            GPSAutoBaud[GPS012] = 100;
-                        }
-                    }
-                    lastNMEATime = thisNMEATime;
-                    lastSentenceCache = words[0];
-                }
-
                 if ((words[0] == "$GPGGA" || words[0] == "$GNGGA") && words.Length > 13)
                 {
                     ParseGGA(GPS012);
@@ -325,26 +286,18 @@ namespace AgIO
                             GPSheading = 180 - Math.Atan2((myLattitude[0] - myLattitude[1]) * Math.PI / 180, 
                                                           (myLongitude[0] - myLongitude[1]) * Math.PI / 180 * Math.Cos(myLattitude[0] * Math.PI / 180)) * 180 / Math.PI;
                             headingTrueDualData = (float)GPSheading;  // not sure, if this is necessary/meaningful... ;)
-                            headingTrueDual = headingTrueDualData;
                             GPSroll = Math.Atan((myAltitude[0] - myAltitude[1]) / antennaDist) * 180 / Math.PI;
-                            rollData = (float)GPSroll;
-                            roll = rollData;
-                            latitudeSend = latitude;
-                            longitudeSend = longitude;
-                            if (lastSentence == "GGA") isNMEAToSend = true;
-
-                            ParseIMU_BNO085_RVC();  // add BNO085 values on CGA reception
+                            //GPSheading = (myLattitude[0] - myLattitude[1]) * 10000000;  // debug outputs
+                            //GPSroll = (myLongitude[0] - myLongitude[1])  * Math.Cos(myLattitude[0] * Math.PI / 180) * 10000000;
+                            //antennaDist = myAltitude[0] - myAltitude[1];
+                            ParseIMU_BNO085_RVC();  
                         }
                     }
                     else  // only one F9P => copy directly
                     {
                         latitude = myLattitude[GPS012];
                         longitude = myLongitude[GPS012];
-                        latitudeSend = latitude;
-                        longitudeSend = longitude;
-                        if (lastSentence == "GGA") isNMEAToSend = true;
-
-                        ParseIMU_BNO085_RVC();  // add BNO085 values on CGA reception
+                        ParseIMU_BNO085_RVC();  
                     }
                 }
 
@@ -638,6 +591,8 @@ namespace AgIO
                 { if (words[5] == "W") longitude *= -1; }
                 longitudeSend = longitude;
                 myLongitude[GPS012] = longitude;
+
+                if (lastSentence == "GGA") isNMEAToSend = true;
 
                 myTime[GPS012] = DateTime.UtcNow.Millisecond;
             }
